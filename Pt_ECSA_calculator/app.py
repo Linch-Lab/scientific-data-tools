@@ -22,7 +22,7 @@ E0_REF_DICT = {
 st.set_page_config(page_title="Pt ECSA Analyzer Pro", layout="wide")
 
 # ==========================================
-# 2. Math Helpers (Precision Logic)
+# 2. Math Helpers
 # ==========================================
 
 def get_linear_intersection(x1, y1, x2, y2, base_y1, base_y2):
@@ -30,18 +30,13 @@ def get_linear_intersection(x1, y1, x2, y2, base_y1, base_y2):
     if x2 == x1: return x1, y1
     m1 = (y2 - y1) / (x2 - x1)
     m2 = (base_y2 - base_y1) / (x2 - x1)
-    
     if m1 == m2: return x1, y1
-    
     x_cross = (base_y1 - y1 + x1 * (m1 - m2)) / (m1 - m2)
     y_cross = m1 * (x_cross - x1) + y1
     return x_cross, y_cross
 
 def calculate_precise_area(V_arr, I_curve, I_base):
-    """
-    Calculates area between Curve and Baseline (DL Fit).
-    Strictly integrates ONLY where Curve > Baseline (I_net > 0).
-    """
+    """Calculates area between Curve and Red Baseline (DL Fit)."""
     total_area = 0.0
     V_fill, I_fill_top, I_fill_bot = [], [], []
 
@@ -53,7 +48,7 @@ def calculate_precise_area(V_arr, I_curve, I_base):
         diff1 = y1 - b1
         diff2 = y2 - b2
         
-        # Case A: Entirely Above Baseline (Normal H-desorption)
+        # Case A: Entirely Above Baseline
         if diff1 >= 0 and diff2 >= 0:
             width = x2 - x1
             avg_height = (diff1 + diff2) / 2.0
@@ -62,19 +57,17 @@ def calculate_precise_area(V_arr, I_curve, I_base):
             I_fill_top.extend([y1, y2])
             I_fill_bot.extend([b1, b2])
 
-        # Case B: Crossing Up (Entering H-desorption)
+        # Case B: Crossing Up
         elif diff1 < 0 and diff2 > 0:
             x_cross, y_cross = get_linear_intersection(x1, y1, x2, y2, b1, b2)
-            # Integrate triangle from Cross to x2
             total_area += 0.5 * (x2 - x_cross) * diff2
             V_fill.extend([x_cross, x2])
             I_fill_top.extend([y_cross, y2])
             I_fill_bot.extend([y_cross, b2])
 
-        # Case C: Crossing Down (Leaving H-desorption)
+        # Case C: Crossing Down
         elif diff1 > 0 and diff2 < 0:
             x_cross, y_cross = get_linear_intersection(x1, y1, x2, y2, b1, b2)
-            # Integrate triangle from x1 to Cross
             total_area += 0.5 * (x_cross - x1) * diff1
             V_fill.extend([x1, x_cross])
             I_fill_top.extend([y1, y_cross])
@@ -154,9 +147,18 @@ if uploaded_file is not None:
         shift = get_ref_shift(ref_mode, ph, temp_c, kcl)
         V_calib = V_raw + shift
         diff_V = np.diff(V_calib, append=V_calib[-1])
+        
+        # --- Separate Anodic (Upper) and Cathodic (Lower) ---
         mask_anodic = diff_V > 0
         V_anodic = V_calib[mask_anodic]
         I_anodic = I_raw[mask_anodic]
+        
+        # We need Cathodic data for the Blue Line logic
+        # Cathodic is when V is decreasing (diff_V <= 0)
+        # We use <= to catch turning points if needed
+        mask_cathodic = diff_V <= 0
+        V_cathodic = V_calib[mask_cathodic]
+        I_cathodic = I_raw[mask_cathodic]
 
         if len(V_anodic) > 0:
             st.subheader("Analysis Ranges")
@@ -177,7 +179,6 @@ if uploaded_file is not None:
 
             # --- Auto-Find Logic ---
             if auto_find_start:
-                # Find Valley between 0.02V and DL Start
                 mask_search = (V_anodic >= 0.02) & (V_anodic <= dl_start)
                 if np.any(mask_search):
                     V_search = V_anodic[mask_search]
@@ -192,15 +193,36 @@ if uploaded_file is not None:
 
             # --- CORE ALGORITHM ---
 
-            # 1. Double Layer Fit (Red Line)
-            # This is the PRIMARY Baseline for Integration
+            # 1. Double Layer Fit (Red Line) - ANODIC
             mask_dl = (V_anodic >= dl_start) & (V_anodic <= dl_end)
             V_dl, I_dl = V_anodic[mask_dl], I_anodic[mask_dl]
             slope, intercept = 0, 0
             if len(V_dl) > 1:
                 slope, intercept = np.polyfit(V_dl, I_dl, 1)
 
-            # 2. Integration (Curve vs Red Line)
+            # 2. Blue Line Logic (Parallel to Red, touching Lower Half Highest Point)
+            # "Lower Half" = Cathodic Scan
+            # "Highest Point" = Max Current (least negative) in the DL region
+            
+            blue_intercept = intercept # Fallback
+            
+            if len(V_cathodic) > 0:
+                # Restrict search to the DL range on the Cathodic scan
+                mask_cat_dl = (V_cathodic >= dl_start) & (V_cathodic <= dl_end)
+                V_cat_dl = V_cathodic[mask_cat_dl]
+                I_cat_dl = I_cathodic[mask_cat_dl]
+                
+                if len(V_cat_dl) > 0:
+                    # Find the "Highest Point" (Max I) in this lower half region
+                    max_idx = np.argmax(I_cat_dl)
+                    V_max_cat = V_cat_dl[max_idx]
+                    I_max_cat = I_cat_dl[max_idx]
+                    
+                    # Calculate new intercept for Blue Line: y = mx + c  =>  c = y - mx
+                    # m is slope from Red Line (Parallel requirement)
+                    blue_intercept = I_max_cat - slope * V_max_cat
+            
+            # 3. Integration (Anodic Curve vs Red Line)
             mask_integ = (V_anodic >= h_start) & (V_anodic <= h_end)
             V_integ = V_anodic[mask_integ]
             I_integ_curve = I_anodic[mask_integ]
@@ -208,23 +230,9 @@ if uploaded_file is not None:
             # Baseline is strictly the Red Line (DL Fit)
             I_integ_base = slope * V_integ + intercept
             
-            # Calculate Area (Curve - RedLine)
             area_AV, V_fill, I_fill_top, I_fill_bot = calculate_precise_area(
                 V_integ, I_integ_curve, I_integ_base
             )
-
-            # 3. Visual Blue Line Logic (Tangent Offset - Visual Only)
-            # Find the minimum point of the curve in integration range
-            # Shift the Red Line down to touch that minimum point
-            offset_amps = 0.0
-            if len(V_integ) > 0:
-                # Diff = RedLine - Data
-                diffs = I_integ_base - I_integ_curve
-                # We want to shift DOWN by the MAX distance where RedLine is ABOVE Data
-                max_diff = np.max(diffs)
-                # If max_diff is positive, it means RedLine is above Data somewhere.
-                # We define Blue Line = Red Line - max_diff (Touching the lowest valley)
-                offset_amps = max_diff if max_diff > 0 else 0.0
 
             # 4. Physics Calculation
             scan_rate_v_s = scan_rate / 1000.0
@@ -248,20 +256,19 @@ if uploaded_file is not None:
             elif curr_unit == "mA/cm2": i_fac = 1000.0 / area
             else: i_fac = 1.0
             
-            # 1. Raw Data
+            # 1. Raw Data (Plot full cycle to show Lower Half)
             ax.plot(V_calib * v_fac, I_raw * i_fac, 'k-', alpha=0.6, label="Cycle Data")
             
-            # 2. Red Line (DL Fit - The Integration Baseline)
+            # 2. Red Line (DL Fit)
             V_line = np.linspace(min(V_anodic), max(V_anodic), 200)
             I_red = slope * V_line + intercept
-            ax.plot(V_line * v_fac, I_red * i_fac, 'r--', label="DL Fit (Integ. Base)")
+            ax.plot(V_line * v_fac, I_red * i_fac, 'r--', label="DL Fit (Red)")
             
-            # 3. Blue Line (Visual Only - Tangent)
-            I_blue = I_red - offset_amps
-            ax.plot(V_line * v_fac, I_blue * i_fac, 'b:', alpha=0.5, label="Visual Tangent (Offset)")
+            # 3. Blue Line (Lower Half Tangent)
+            I_blue = slope * V_line + blue_intercept
+            ax.plot(V_line * v_fac, I_blue * i_fac, 'b:', alpha=0.8, label="Cathodic Tangent (Blue)")
             
-            # 4. Fill Area (Data vs Red Line)
-            # This visually represents the Math: Integral(Data - RedLine)
+            # 4. Fill Area (Cyan - Anodic only)
             if len(V_fill) > 0:
                 ax.fill_between(np.array(V_fill) * v_fac, 
                                 np.array(I_fill_top) * i_fac, 
@@ -285,7 +292,7 @@ if uploaded_file is not None:
             pd.DataFrame({
                 f"Potential ({pot_unit})": V_calib * v_fac,
                 f"Current ({curr_unit})": I_raw * i_fac,
-                "DL_Baseline": I_red * i_fac
+                "DL_Baseline_Red": I_red * i_fac
             }).to_csv(csv_buf, index=False)
             st.download_button("📥 Download CSV", csv_buf.getvalue(), "ecsa_result.csv", "text/csv")
 
