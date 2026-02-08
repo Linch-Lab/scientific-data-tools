@@ -114,21 +114,20 @@ if uploaded_file is not None:
         I_anodic = I_raw[mask_anodic]
 
         if len(V_anodic) > 0:
-            # --- 互動式範圍調整 (使用 Columns) ---
+            # --- 0. 介面設定 (改為兩欄，移除 Offset 輸入) ---
             st.subheader("Analysis Ranges")
-            c1, c2, c3 = st.columns(3)
+            c1, c2 = st.columns(2)
+            
             with c1:
-                st.markdown("**DL Fit Range (Red)**")
+                st.markdown("**1. DL Fit Range (Red)**")
                 dl_start = st.number_input("DL Start (V)", value=0.4, step=0.05)
                 dl_end = st.number_input("DL End (V)", value=0.6, step=0.05)
+            
             with c2:
-                st.markdown("**Integration Range (Cyan)**")
+                st.markdown("**2. Integration Range (Cyan)**")
                 h_start = st.number_input("Int Start (V)", value=0.05, step=0.05)
                 h_end = st.number_input("Int End (V)", value=0.4, step=0.05)
-            with c3:
-                st.markdown("**Baseline Offset**")
-                offset_val = st.number_input("Offset (mA/cm2)", value=0.0, step=0.01)
-
+            
             # --- ECSA 核心運算 ---
             # Double Layer Fit
             mask_dl = (V_anodic >= dl_start) & (V_anodic <= dl_end)
@@ -147,10 +146,23 @@ if uploaded_file is not None:
             I_integ = I_anodic[mask_integ]
 
             # Baseline calculation
-            I_baseline = slope * V_integ + intercept
+            offset_amps = 0.0
+            if len(V_integ) > 0:
+                # 預測的紅色基線電流 (Amps)
+                I_red_pred = slope * V_integ + intercept
+                # 計算差值 (紅線 - 實際電流)
+                diff_amps = I_red_pred - I_integ
+                # 找出最大差值 (即最深的地方)，若為負值代表曲線本來就在紅線上方，則 Offset 為 0
+                max_diff = np.max(diff_amps)
+                offset_amps = max_diff if max_diff > 0 else 0.0   
+            
+            # 計算最終積分基線 (Baseline) = 紅色基線 - Offset
+            I_baseline = (slope * V_integ + intercept) - offset_amps
+            
+            # Net Current
             I_net = I_integ - I_baseline
-            I_net = np.maximum(I_net, 0) # 只取大於基線的部分
-
+            I_net = np.maximum(I_net, 0) # 只取大於基線的部分 
+            
             # Trapz Integration
             area_AV = np.trapezoid(I_net, V_integ) if len(V_integ) > 1 else 0
             
@@ -198,14 +210,14 @@ if uploaded_file is not None:
             # 3. 偏移線 (Parallel Ref - Blue)
             # Offset is defined in Display Units (usually mA/cm2)
             # 所以直接在顯示層級減去 offset
-            I_line_blue_disp = (I_line_red * i_fac) - offset_val
+            I_line_blue_disp = (I_line_red * i_fac) - offset_amps
             ax.plot(V_line * v_fac, I_line_blue_disp, 'b:', label="Parallel Ref")
 
             # 4. 填色區域 (Cyan)
             if len(V_integ) > 0:
                 # 這裡要很小心單位，基線也要轉成顯示單位
                 y1 = I_integ * i_fac
-                y2 = (slope * V_integ + intercept) * i_fac
+                y2 = (slope * V_integ + intercept - offset_amps) * i_fac
                 
                 # 只填色實際電流 > 基線的部分
                 ax.fill_between(V_integ * v_fac, y1, y2, where=(y1 > y2), 
