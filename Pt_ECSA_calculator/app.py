@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
+from scipy.integrate import trapezoid
 import io
 
 # --- 1. 常數與設定 ---
@@ -151,7 +152,7 @@ if uploaded_file is not None:
             I_net = np.maximum(I_net, 0) # 只取大於基線的部分
 
             # Trapz Integration
-            area_AV = np.trapz(I_net, V_integ) if len(V_integ) > 1 else 0
+            area_AV = np.trapezoid(I_net, V_integ) if len(V_integ) > 1 else 0
             
             # Unit Conversion Logic
             scan_rate_v_s = scan_rate / 1000.0
