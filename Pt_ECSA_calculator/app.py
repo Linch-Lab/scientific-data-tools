@@ -66,7 +66,7 @@ else:
     ph, temp_c, kcl = 1.0, 25.0, "sat."
 
 # --- 4. 主畫面：數據處理與互動 ---
-st.title("🧪 Pt-ECSA Analyzer (Web Version)")
+st.title("🧪 Pt-ECSA Analyzer")
 
 if uploaded_file is not None:
     # 讀取數據
