@@ -153,9 +153,6 @@ if uploaded_file is not None:
         V_anodic = V_calib[mask_anodic]
         I_anodic = I_raw[mask_anodic]
         
-        # We need Cathodic data for the Blue Line logic
-        # Cathodic is when V is decreasing (diff_V <= 0)
-        # We use <= to catch turning points if needed
         mask_cathodic = diff_V <= 0
         V_cathodic = V_calib[mask_cathodic]
         I_cathodic = I_raw[mask_cathodic]
@@ -201,25 +198,18 @@ if uploaded_file is not None:
                 slope, intercept = np.polyfit(V_dl, I_dl, 1)
 
             # 2. Blue Line Logic (Parallel to Red, touching Lower Half Highest Point)
-            # "Lower Half" = Cathodic Scan
-            # "Highest Point" = Max Current (least negative) in the DL region
-            
             blue_intercept = intercept # Fallback
             
             if len(V_cathodic) > 0:
-                # Restrict search to the DL range on the Cathodic scan
                 mask_cat_dl = (V_cathodic >= dl_start) & (V_cathodic <= dl_end)
                 V_cat_dl = V_cathodic[mask_cat_dl]
                 I_cat_dl = I_cathodic[mask_cat_dl]
                 
                 if len(V_cat_dl) > 0:
-                    # Find the "Highest Point" (Max I) in this lower half region
                     max_idx = np.argmax(I_cat_dl)
                     V_max_cat = V_cat_dl[max_idx]
                     I_max_cat = I_cat_dl[max_idx]
-                    
-                    # Calculate new intercept for Blue Line: y = mx + c  =>  c = y - mx
-                    # m is slope from Red Line (Parallel requirement)
+                    # Calculate new intercept for Blue Line
                     blue_intercept = I_max_cat - slope * V_max_cat
             
             # 3. Integration (Anodic Curve vs Red Line)
@@ -256,7 +246,7 @@ if uploaded_file is not None:
             elif curr_unit == "mA/cm2": i_fac = 1000.0 / area
             else: i_fac = 1.0
             
-            # 1. Raw Data (Plot full cycle to show Lower Half)
+            # 1. Raw Data
             ax.plot(V_calib * v_fac, I_raw * i_fac, 'k-', alpha=0.6, label="Cycle Data")
             
             # 2. Red Line (DL Fit)
@@ -268,7 +258,7 @@ if uploaded_file is not None:
             I_blue = slope * V_line + blue_intercept
             ax.plot(V_line * v_fac, I_blue * i_fac, 'b:', alpha=0.8, label="Cathodic Tangent (Blue)")
             
-            # 4. Fill Area (Cyan - Anodic only)
+            # 4. Fill Area
             if len(V_fill) > 0:
                 ax.fill_between(np.array(V_fill) * v_fac, 
                                 np.array(I_fill_top) * i_fac, 
@@ -288,13 +278,23 @@ if uploaded_file is not None:
             ax.grid(True, alpha=0.3)
             st.pyplot(fig)
 
+            # --- FIXED EXPORT LOGIC ---
             csv_buf = io.StringIO()
-            pd.DataFrame({
+            # 1. Create Dataframe with ONLY Cycle Data (Length guaranteed to match)
+            # 2. Use user-selected Units
+            df_export = pd.DataFrame({
                 f"Potential ({pot_unit})": V_calib * v_fac,
-                f"Current ({curr_unit})": I_raw * i_fac,
-                "DL_Baseline_Red": I_red * i_fac
-            }).to_csv(csv_buf, index=False)
-            st.download_button("📥 Download CSV", csv_buf.getvalue(), "ecsa_result.csv", "text/csv")
+                f"Current ({curr_unit})": I_raw * i_fac
+            })
+            
+            # 3. Download Button
+            df_export.to_csv(csv_buf, index=False)
+            st.download_button(
+                label="📥 Download Cycle Data (CSV)",
+                data=csv_buf.getvalue(),
+                file_name=f"Cycle_{selected_cycle_label}_Export.csv",
+                mime="text/csv"
+            )
 
     except Exception as e:
         st.error(f"Error: {e}")
