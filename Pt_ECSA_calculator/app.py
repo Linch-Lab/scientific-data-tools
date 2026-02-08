@@ -105,14 +105,14 @@ st.sidebar.header("⚙️ Parameters")
 uploaded_file = st.sidebar.file_uploader("Upload CV Data (.txt/.csv)", type=["txt", "csv"])
 
 st.sidebar.subheader("Experimental Setup")
-scan_rate = st.sidebar.number_input("Scan Rate (mV/s)", value=50.0, step=10.0)
-area = st.sidebar.number_input("Active Area (cm²)", value=0.196, format="%.4f")
-loading = st.sidebar.number_input("Pt Loading (mg/cm²)", value=0.1, step=0.01)
+scan_rate = st.sidebar.number_input("Scan Rate (mV/s)", value=1000.0, step=50.0)
+area = st.sidebar.number_input("Active Area (cm²)", value=0.09621, format="%.4f")
+loading = st.sidebar.number_input("Pt Loading (mg/cm²)", value=0.1, step=0.1)
 
 st.sidebar.subheader("Calibration")
 ref_mode = st.sidebar.selectbox("Ref Mode", ["Ag/AgCl -> RHE", "RHE -> Ag/AgCl", "None (Raw)"])
 if "Raw" not in ref_mode:
-    ph = st.sidebar.number_input("pH", value=1.0, step=0.1)
+    ph = st.sidebar.number_input("pH", value=0.0, step=1.0)
     temp_c = st.sidebar.number_input("Temp (°C)", value=25.0)
     kcl = st.sidebar.selectbox("KCl Conc.", ["sat.", "3.5M", "3M", "1M"])
 else:
@@ -163,10 +163,10 @@ if uploaded_file is not None:
             # --- Auto-Find & UI Logic ---
             default_dl_start = 0.4
             default_dl_end = 0.6
-            default_h_start = 0.05
-            default_h_end = 0.4
+            default_h_start = 0.0
+            default_h_end = 0.45
 
-            auto_find_start = st.checkbox("✅ Auto-Find Integration Start (Valley Detection)", value=True)
+            auto_find_start = st.checkbox("Auto-Find Integration Start (Valley Detection)", value=False)
 
             c1, c2 = st.columns(2)
             with c1:
