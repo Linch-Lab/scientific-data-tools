@@ -8,13 +8,12 @@ import io
 # ==========================================
 # 1. Constants & Configuration
 # ==========================================
-Q_REF_PT = 210.0  # uC/cm2 (Charge constant for Polycrystalline Pt)
+Q_REF_PT = 210.0  # uC/cm2
 F = 96485.0       # C/mol
 R_GAS = 8.314     # J/(mol K)
 
-# Reference electrode potentials vs SHE
 E0_REF_DICT = {
-    "sat.": 0.1976, # Ag/AgCl (sat. KCl)
+    "sat.": 0.1976, 
     "3.5M": 0.205,
     "3M": 0.210,
     "1M": 0.235
@@ -23,31 +22,23 @@ E0_REF_DICT = {
 st.set_page_config(page_title="Pt ECSA Analyzer Pro", layout="wide")
 
 # ==========================================
-# 2. Math Helpers (Precision Logic)
+# 2. Math Helpers
 # ==========================================
 
 def get_linear_intersection(x1, y1, x2, y2, base_y1, base_y2):
-    """
-    [Math Helper] Finds the exact intersection V where the Data Line crosses the Baseline.
-    Used for sub-pixel integration precision.
-    """
+    """Finds intersection between Data segment and Baseline segment."""
     if x2 == x1: return x1, y1
     m1 = (y2 - y1) / (x2 - x1)
     m2 = (base_y2 - base_y1) / (x2 - x1)
     
     if m1 == m2: return x1, y1
     
-    # Solve linear equation for intersection x
     x_cross = (base_y1 - y1 + x1 * (m1 - m2)) / (m1 - m2)
     y_cross = m1 * (x_cross - x1) + y1
     return x_cross, y_cross
 
 def calculate_precise_area(V_arr, I_curve, I_base):
-    """
-    [Math Helper] Calculates area between Curve and Baseline.
-    - It finds exact crossing points to handle discrete data errors.
-    - It ONLY adds area where Curve > Baseline (avoids negative area).
-    """
+    """Calculates area where Curve > Baseline with sub-pixel precision."""
     total_area = 0.0
     V_fill, I_fill_top, I_fill_bot = [], [], []
 
@@ -59,7 +50,7 @@ def calculate_precise_area(V_arr, I_curve, I_base):
         diff1 = y1 - b1
         diff2 = y2 - b2
         
-        # Case A: Entire segment is ABOVE baseline (Normal case)
+        # Case A: Entirely Above
         if diff1 >= 0 and diff2 >= 0:
             width = x2 - x1
             avg_height = (diff1 + diff2) / 2.0
@@ -68,19 +59,17 @@ def calculate_precise_area(V_arr, I_curve, I_base):
             I_fill_top.extend([y1, y2])
             I_fill_bot.extend([b1, b2])
 
-        # Case B: Crossing UPWARDS (Below -> Above)
+        # Case B: Crossing Up
         elif diff1 < 0 and diff2 > 0:
             x_cross, y_cross = get_linear_intersection(x1, y1, x2, y2, b1, b2)
-            # Integrate triangle from Cross to x2
             total_area += 0.5 * (x2 - x_cross) * diff2
             V_fill.extend([x_cross, x2])
             I_fill_top.extend([y_cross, y2])
             I_fill_bot.extend([y_cross, b2])
 
-        # Case C: Crossing DOWNWARDS (Above -> Below)
+        # Case C: Crossing Down
         elif diff1 > 0 and diff2 < 0:
             x_cross, y_cross = get_linear_intersection(x1, y1, x2, y2, b1, b2)
-            # Integrate triangle from x1 to Cross
             total_area += 0.5 * (x_cross - x1) * diff1
             V_fill.extend([x1, x_cross])
             I_fill_top.extend([y1, y_cross])
@@ -138,14 +127,13 @@ st.title("🧪 Pt-ECSA Analyzer Pro")
 
 if uploaded_file is not None:
     try:
-        # --- A. Data Loading ---
+        # Load & Process Data
         raw_df = pd.read_csv(uploaded_file, sep=None, engine='python')
         V_full = pd.to_numeric(raw_df.iloc[:, 0], errors='coerce').values
         I_full = pd.to_numeric(raw_df.iloc[:, 1], errors='coerce').values
         mask = ~np.isnan(V_full) & ~np.isnan(I_full)
         V_full, I_full = V_full[mask], I_full[mask]
 
-        # --- B. Cycle Selection ---
         cycles = identify_cycles(V_full)
         cycle_options = [f"Cycle {i+1}" for i in range(len(cycles))]
         
@@ -159,7 +147,6 @@ if uploaded_file is not None:
         V_raw = V_full[start:end]
         I_raw = I_full[start:end]
 
-        # --- C. Pre-Processing ---
         shift = get_ref_shift(ref_mode, ph, temp_c, kcl)
         V_calib = V_raw + shift
         diff_V = np.diff(V_calib, append=V_calib[-1])
@@ -170,98 +157,87 @@ if uploaded_file is not None:
         if len(V_anodic) > 0:
             st.subheader("Analysis Ranges")
             
-            # --- D. Auto-Find Logic (New Feature) ---
-            auto_find_start = st.checkbox("✅ Auto-Find Integration Start (Valley Detection)", value=True)
+            # --- Auto-Find & UI Logic ---
             
-            # Default values
+            # Default Values
             default_dl_start = 0.4
             default_dl_end = 0.6
             default_h_start = 0.05
             default_h_end = 0.4
 
-            # [Auto-Find Algorithm]
-            # Goal: Find the 'Valley' (minimum current) between HER (low V) and Double Layer.
-            if auto_find_start:
-                # Search range: 0.02V to 0.35V (Typical H-upd start region)
-                mask_search = (V_anodic >= 0.02) & (V_anodic <= 0.35)
-                if np.any(mask_search):
-                    V_search = V_anodic[mask_search]
-                    I_search = I_anodic[mask_search]
-                    # Find index of minimum current (The Valley)
-                    min_idx = np.argmin(I_search)
-                    found_h_start = V_search[min_idx]
-                    default_h_start = float(found_h_start)
-                    # st.success(f"Auto-detected Start: {default_h_start:.3f} V")
+            # Checkbox for Auto-Find
+            auto_find_start = st.checkbox("✅ Auto-Find Integration Start (Valley Detection)", value=True)
 
-            # --- E. UI Inputs ---
+            # --- Inputs (Part 1: DL Range) ---
+            # We need DL range first to bound the search
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**1. DL Fit Range (Red)**")
                 dl_start = st.number_input("DL Start (V)", value=default_dl_start, step=0.05)
                 dl_end = st.number_input("DL End (V)", value=default_dl_end, step=0.05)
+
+            # --- Auto-Find Algorithm ---
+            if auto_find_start:
+                # Search strictly between 0.02V and DL Start
+                # This prevents looking into the DL region or too far into HER
+                mask_search = (V_anodic >= 0.02) & (V_anodic <= dl_start)
+                if np.any(mask_search):
+                    V_search = V_anodic[mask_search]
+                    I_search = I_anodic[mask_search]
+                    # Find Valley (Minimum Current)
+                    min_idx = np.argmin(I_search)
+                    found_h_start = V_search[min_idx]
+                    default_h_start = float(found_h_start)
+
+            # --- Inputs (Part 2: Integration Range) ---
             with c2:
                 st.markdown("**2. Integration Range (Cyan)**")
-                h_start = st.number_input("Int Start (V)", value=default_h_start, step=0.01, format="%.3f")
+                # Disabled if Auto-Find is On
+                h_start = st.number_input("Int Start (V)", value=default_h_start, step=0.01, format="%.3f", disabled=auto_find_start)
                 h_end = st.number_input("Int End (V)", value=default_h_end, step=0.05)
 
-            # --- F. Core Algorithm (Revised) ---
+            # --- CORE ALGORITHM ---
 
             # 1. Double Layer Fit (Red Line)
-            # ------------------------------------------------
             mask_dl = (V_anodic >= dl_start) & (V_anodic <= dl_end)
             V_dl, I_dl = V_anodic[mask_dl], I_anodic[mask_dl]
             slope, intercept = 0, 0
             if len(V_dl) > 1:
                 slope, intercept = np.polyfit(V_dl, I_dl, 1)
 
-            # 2. Offset Calculation (Anchor Method) - FIXED
-            # ------------------------------------------------
-            # Instead of looking for max deviation across the whole range,
-            # we ANCHOR the blue line to the 'Integration Start' point.
-            # This ensures the baseline starts exactly where integration begins.
-            
-            # Find the actual current at h_start (by interpolation or nearest neighbor)
-            # We use the calculated slope to project back to h_start.
-            
-            # Find the closest real data point to h_start
+            # 2. Offset Calculation (Anchor Method)
+            # Find closest data point to h_start
             idx_start = (np.abs(V_anodic - h_start)).argmin()
             V_anchor = V_anodic[idx_start]
             I_anchor = I_anodic[idx_start]
 
-            # Calculate Red Line value at this anchor point
+            # Project Red Line to this V
             I_red_at_anchor = slope * V_anchor + intercept
             
-            # The Offset is the distance from Red Line to the Data Anchor point
-            # Offset = Red_Predicted - Actual_Data_At_Start
+            # Calculate Offset needed to touch this point
             offset_amps = I_red_at_anchor - I_anchor
             
-            # 3. Define Baseline (Blue Line)
-            # ------------------------------------------------
-            # Baseline = Red_Line - Offset
-            # This forces the Blue Line to pass exactly through the Anchor Point (h_start)
-            
-            # 4. Prepare Integration Data
+            # 3. Define Baseline for Integration
             mask_integ = (V_anodic >= h_start) & (V_anodic <= h_end)
             V_integ = V_anodic[mask_integ]
             I_integ_curve = I_anodic[mask_integ]
             
-            # Generate Baseline array for the integration range
+            # Baseline = RedLine - Offset
             I_integ_base = (slope * V_integ + intercept) - offset_amps
             
-            # 5. Precision Integration
-            # ------------------------------------------------
+            # 4. Precision Integration
             area_AV, V_fill, I_fill_top, I_fill_bot = calculate_precise_area(
                 V_integ, I_integ_curve, I_integ_base
             )
 
-            # 6. Physics Calculation
+            # 5. Physics Calculation
             scan_rate_v_s = scan_rate / 1000.0
             charge_uC = (area_AV / scan_rate_v_s) * 1e6
             ecsa_cm2 = charge_uC / Q_REF_PT
             total_mass_g = (loading * area) / 1000.0
             ms_ecsa = (ecsa_cm2 / 10000.0) / total_mass_g if total_mass_g > 0 else 0
 
-            # --- G. Display & Plots ---
+            # --- DISPLAY & PLOTS ---
             st.divider()
             r1, r2, r3 = st.columns(3)
             r1.metric("Charge (uC)", f"{charge_uC:.2f}")
@@ -271,7 +247,7 @@ if uploaded_file is not None:
             # Plotting
             fig, ax = plt.subplots(figsize=(10, 6))
             
-            # Factors for Display
+            # Factors
             v_fac = 1000.0 if pot_unit == "mV" else 1.0
             if curr_unit == "mA": i_fac = 1000.0
             elif curr_unit == "mA/cm2": i_fac = 1000.0 / area
@@ -280,15 +256,14 @@ if uploaded_file is not None:
             # Plot Raw
             ax.plot(V_calib * v_fac, I_raw * i_fac, 'k-', alpha=0.6, label="Cycle Data")
             
-            # Plot Red Line (DL Fit)
-            # Extend line for visualization
+            # Plot Red Line (Extended)
             V_line = np.linspace(min(V_anodic), max(V_anodic), 200)
             I_red = slope * V_line + intercept
             ax.plot(V_line * v_fac, I_red * i_fac, 'r--', label="DL Fit")
             
             # Plot Blue Line (Baseline)
             I_blue = I_red - offset_amps
-            ax.plot(V_line * v_fac, I_blue * i_fac, 'b:', label="Offset Baseline")
+            ax.plot(V_line * v_fac, I_blue * i_fac, 'b:', label="Integ. Baseline")
             
             # Plot Fill Area
             if len(V_fill) > 0:
@@ -297,10 +272,13 @@ if uploaded_file is not None:
                                 np.array(I_fill_bot) * i_fac, 
                                 color='cyan', alpha=0.5, label="Integrated Area")
 
-            # Markers
-            ax.axvline(dl_start * v_fac, color='g', ls=':', alpha=0.3)
-            ax.axvline(h_start * v_fac, color='m', ls='--', alpha=0.8, label="Int Start")
-            ax.axvline(h_end * v_fac, color='m', ls=':', alpha=0.3)
+            # Markers (Fix: Added dl_end explicitly)
+            ax.axvline(dl_start * v_fac, color='g', ls=':', alpha=0.4)
+            ax.axvline(dl_end * v_fac, color='g', ls=':', alpha=0.4, label="DL End") 
+            
+            # Int Start (Fix: Transparent & Labeled)
+            ax.axvline(h_start * v_fac, color='m', ls='--', alpha=0.4, label="Int Start")
+            ax.axvline(h_end * v_fac, color='m', ls=':', alpha=0.4)
             
             ax.set_xlabel(f"Potential ({pot_unit})")
             ax.set_ylabel(f"Current ({curr_unit})")
