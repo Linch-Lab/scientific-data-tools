@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # ==========================================
-# Dr. Max 的物理常數定義
+# 物理常數定義
 # ==========================================
 F = 96485.3329  # Faraday constant (s A / mol)
 MOLAR_VOL_STP = 22.414 # L/mol (STP)
@@ -126,8 +126,8 @@ def calculate_physics_engine(
 # UI 介面
 # ==========================================
 def main():
-    st.set_page_config(page_title="FC Calculator - Dr. Max", layout="wide", page_icon="⚡")
-    st.title("⚡ 燃料電池全溫域計算機 (Dr. Max Edition)")
+    st.set_page_config(page_title="FC Calculator - Dr. Ching-Hsien Lin", layout="wide", page_icon="⚡")
+    st.title("⚡ 燃料電池計算機")
     
     with st.sidebar:
         st.header("⚙️ 單位設定")
